@@ -16,8 +16,8 @@ interface apb_if ();
  
  
 endinterface : apb_if
-========================================================
-Verification Environment
+//========================================================
+//Verification Environment
 `timescale 1ns / 1ps
  
 /*
@@ -87,7 +87,9 @@ endmodule
 */
  
 `include "uvm_macros.svh"
+`include "uvm_pkg.sv"
  import uvm_pkg::*;
+ `include "design.sv"
  
  
 ////////////////////////////////////////////////////////////////////////////////////
@@ -536,6 +538,7 @@ endclass
  
 class sco extends uvm_scoreboard;
 `uvm_component_utils(sco)
+//transaction cov_tr;
  
   uvm_analysis_imp#(transaction,sco) recv;
   bit [31:0] arr[32] = '{default:0};
@@ -546,44 +549,60 @@ class sco extends uvm_scoreboard;
  
     function new(input string inst = "sco", uvm_component parent = null);
     super.new(inst,parent);
+    //cg cgg=new();
     endfunction
     
     virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     recv = new("recv", this);
+    
+    //cgg=new();
+    //cov_tr=transaction::type_id::create("cov_tr");
+  
     endfunction
+
+    /*covergroup cg;
+    coverpoint cov_tr.PADDR{
+                bins min={[1:1000]};
+                bins max={[1001:10000]};}
+    endgroup*/
     
     
-  virtual function void write(transaction tr);
-    if(tr.op == rst)
+  virtual function void write(transaction T);
+    if(T.op == rst)
               begin
                 `uvm_info("SCO", "SYSTEM RESET DETECTED", UVM_NONE);
               end  
-    else if (tr.op == writed)
+    else if (T.op == writed)
       begin
-            if(tr.PSLVERR == 1'b1)
+            if(T.PSLVERR == 1'b1)
                 begin
                   `uvm_info("SCO", "SLV ERROR during WRITE OP", UVM_NONE);
                 end
               else
                 begin
-                  arr[tr.PADDR] = tr.PWDATA;
-                  `uvm_info("SCO", $sformatf("DATA WRITE OP  addr:%0d, wdata:%0d arr_wr:%0d",tr.PADDR,tr.PWDATA,  arr[tr.PADDR]), UVM_NONE);
+                  arr[T.PADDR] = T.PWDATA;
+                  `uvm_info("SCO", $sformatf("DATA WRITE OP  addr:%0d, wdata:%0d arr_wr:%0d",T.PADDR,T.PWDATA,  arr[T.PADDR]), UVM_NONE);
                 end
       end
-    else if (tr.op == readd)
+    else if (T.op == readd)
       begin
-           if(tr.PSLVERR == 1'b1)
+           if(T.PSLVERR == 1'b1)
                 begin
                   `uvm_info("SCO", "SLV ERROR during READ OP", UVM_NONE);
                 end
               else 
                 begin
-                         data_rd = arr[tr.PADDR];
-                 		 if (data_rd == tr.PRDATA)
-                 			 `uvm_info("SCO", $sformatf("DATA MATCHED : addr:%0d, rdata:%0d",tr.PADDR,tr.PRDATA), UVM_NONE)
-                         else
-                           `uvm_info("SCO",$sformatf("TEST FAILED : addr:%0d, rdata:%0d data_rd_arr:%0d",tr.PADDR,tr.PRDATA,data_rd), UVM_NONE) 
+                         data_rd = arr[T.PADDR];
+                 		 if (data_rd == T.PRDATA) begin
+                      //$cast(cov_tr,T);
+                      //cgg.sample();
+
+                 			 `uvm_info("SCO", $sformatf("DATA MATCHED : addr:%0d, rdata:%0d",T.PADDR,T.PRDATA), UVM_NONE)
+                     end
+                     
+                     else
+                           `uvm_info("SCO",$sformatf("TEST FAILED : addr:%0d, rdata:%0d data_rd_arr:%0d",T.PADDR,T.PRDATA,data_rd), UVM_NONE) 
                 end
  
       end
@@ -593,6 +612,7 @@ class sco extends uvm_scoreboard;
     endfunction
  
 endclass
+
  
 /////////////////////////////////////////////////////////////////////
  
@@ -634,9 +654,42 @@ endfunction
 endclass
  
 //////////////////////////////////////////////////////////////////////////////////
- 
+class apb_subscriber extends uvm_subscriber#(transaction);
+  
+  `uvm_component_utils(apb_subscriber)
+  //transaction tr;
+  bit [31:0] addr;
+  bit [31:0] data;
+  
+  covergroup cover_bus;
+    coverpoint addr {
+      bins a[16] = {[0:255]};
+    }
+    coverpoint data {
+      bins d[16] = {[0:255]};
+    }
+  endgroup
+  
+  function new(string name, uvm_component parent);
+    super.new(name,parent);
+    cover_bus=new;
+    //tr=transaction::type_id::create("tr");
+  endfunction
+  
+  function void write(transaction t);
+    `uvm_info("APB_SUBSCRIBER", $psprintf("Subscriber received tx %s", t.convert2string()), UVM_NONE);
+   //$cast(tr,t);
+    addr    = t.PADDR;
+    data    = t.PWDATA;
+    cover_bus.sample();
+  endfunction
+  
+endclass
+
+
 class env extends uvm_env;
 `uvm_component_utils(env)
+
  
 function new(input string inst = "env", uvm_component c);
 super.new(inst,c);
@@ -644,19 +697,26 @@ endfunction
  
 agent a;
 sco s;
- 
+apb_subscriber cov;
+
 virtual function void build_phase(uvm_phase phase);
 super.build_phase(phase);
   a = agent::type_id::create("a",this);
   s = sco::type_id::create("s", this);
+  //cov=apb_subscriber::type_id::create("cov",this);
+  cov=apb_subscriber::type_id::create("cov",this);
 endfunction
  
 virtual function void connect_phase(uvm_phase phase);
 super.connect_phase(phase);
 a.m.send.connect(s.recv);
+a.m.send.connect(cov.analysis_export);
+
 endfunction
  
 endclass
+
+
  
 //////////////////////////////////////////////////////////////////////////
  
